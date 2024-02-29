@@ -1,149 +1,146 @@
-import 'dart:async';
-import 'dart:math';
+import 'dart:math'
+    as math; // Import the math library for random number generation
 
-// Abstract Backoff interface for flexibility
-abstract class Backoff {
-  Duration nextBackOff();
-  void reset();
+class ExponentialBackOff {
+ // Define default values for constructor parameters
+  static const int DEFAULT_INITIAL_INTERVAL_MILLIS = 500;
+  static const double DEFAULT_RANDOMIZATION_FACTOR = 0.5;
+  static const double DEFAULT_MULTIPLIER = 1.5;
+  static const int DEFAULT_MAX_INTERVAL_MILLIS = 60000;
+  static const int DEFAULT_MAX_ELAPSED_TIME_MILLIS = 900000;
 
-  // Optional stop value for consistency
-  static const stop = Duration.zero;
-}
-
-// ExponentialBackoff implementation with configurable options
-class ExponentialBackoff implements Backoff {
-  final Duration initialInterval;
+  final int initialIntervalMillis;
   final double randomizationFactor;
   final double multiplier;
-  final Duration maxInterval;
-  final Duration maxElapsedTime;
+  final int maxIntervalMillis;
+  final int maxElapsedTimeMillis;
+  final math.Random random =
+      math.Random(); // Use random object from math library
 
-  late Duration currentInterval;
-  late DateTime startTime;
+  late int currentIntervalMillis;
+  int startTimeNanos = DateTime.now()
+      .microsecondsSinceEpoch; // Use microseconds for better precision
 
-  ExponentialBackoff({
-    this.initialInterval = const Duration(milliseconds: 500),
-    this.randomizationFactor = 0.5,
-    this.multiplier = 1.5,
-    this.maxInterval = const Duration(seconds: 60),
-    this.maxElapsedTime = const Duration(minutes: 15),
+  ExponentialBackOff({
+    this.initialIntervalMillis = DEFAULT_INITIAL_INTERVAL_MILLIS,
+    this.randomizationFactor = DEFAULT_RANDOMIZATION_FACTOR,
+    this.multiplier = DEFAULT_MULTIPLIER,
+    this.maxIntervalMillis = DEFAULT_MAX_INTERVAL_MILLIS,
+    this.maxElapsedTimeMillis = DEFAULT_MAX_ELAPSED_TIME_MILLIS,
   }) {
-    reset();
+    currentIntervalMillis = initialIntervalMillis;
+    if (initialIntervalMillis <= 0) {
+      throw ArgumentError('initialIntervalMillis must be greater than 0');
+    }
+    if (randomizationFactor < 0 || randomizationFactor >= 1) {
+      throw ArgumentError(
+          'randomizationFactor must be between 0 (inclusive) and 1 (exclusive)');
+    }
+    if (multiplier < 1) {
+      throw ArgumentError('multiplier must be greater than or equal to 1');
+    }
+    if (maxIntervalMillis < initialIntervalMillis) {
+      throw ArgumentError(
+          'maxIntervalMillis must be greater than or equal to initialIntervalMillis');
+    }
+    if (maxElapsedTimeMillis <= 0) {
+      throw ArgumentError('maxElapsedTimeMillis must be greater than 0');
+    }
   }
 
-  @override
-  Duration nextBackOff() {
-    final elapsed = getElapsedTime();
-    final calculatedInterval = getRandomizedInterval();
+  void reset() {
+    currentIntervalMillis = initialIntervalMillis;
+    startTimeNanos = DateTime.now().microsecondsSinceEpoch;
+  }
+
+  int nextBackOffMillis() {
+    if (getElapsedTimeMillis() > maxElapsedTimeMillis) {
+      return BackOff.STOP; // Use the constant value from BackOff interface
+    }
+
+    int randomizedInterval =
+        getRandomValueFromInterval(randomizationFactor, currentIntervalMillis);
     incrementCurrentInterval();
-
-    if (maxElapsedTime != Duration.zero &&
-        elapsed + calculatedInterval > maxElapsedTime) {
-      return Backoff.stop;
-    }
-    return calculatedInterval;
+    return randomizedInterval;
   }
 
-  @override
-  void reset() {
-    currentInterval = initialInterval;
-    startTime = DateTime.now();
+  int getRandomValueFromInterval(
+      double randomizationFactor, int currentInterval) {
+    double delta = randomizationFactor * currentInterval;
+    double minInterval = currentInterval - delta;
+    double maxInterval = currentInterval + delta;
+    // Use double.ceil() to ensure the value is always rounded up
+    return (minInterval + random.nextDouble() * (maxInterval - minInterval + 1))
+        .ceil()
+        .toInt();
   }
 
-  // Calculates elapsed time since creation
-  Duration getElapsedTime() => DateTime.now().difference(startTime);
+  int getInitialIntervalMillis() => initialIntervalMillis;
+  double getRandomizationFactor() => randomizationFactor;
+  int getCurrentIntervalMillis() => currentIntervalMillis;
+  double getMultiplier() => multiplier;
+  int getMaxIntervalMillis() => maxIntervalMillis;
+  int getMaxElapsedTimeMillis() => maxElapsedTimeMillis;
 
-  // Increases current interval with capping for efficiency
+  int getElapsedTimeMillis() {
+    return (DateTime.now().microsecondsSinceEpoch - startTimeNanos) ~/ 1000;
+  }
+
   void incrementCurrentInterval() {
-    final nextInterval = currentInterval * multiplier;
-    currentInterval =
-        nextInterval.compareTo(maxInterval) <= 0 ? nextInterval : maxInterval;
-  }
-
-  // Generates a random interval within the specified range
-  Duration getRandomizedInterval() {
-    if (randomizationFactor == 0) {
-      return currentInterval;
+    if (currentIntervalMillis >= maxIntervalMillis / multiplier) {
+      currentIntervalMillis = maxIntervalMillis;
+    } else {
+      currentIntervalMillis =
+          (currentIntervalMillis * multiplier).ceil().toInt();
     }
-
-    final delta = currentInterval * randomizationFactor;
-    final minInterval = currentInterval - delta;
-    final maxInterval = currentInterval + delta;
-    final random = Random().nextDouble();
-
-    // Ensure inclusive range with accurate distribution
-    return minInterval +
-        Duration(
-            milliseconds:
-                (random * (maxInterval - minInterval).inMilliseconds).round());
   }
 }
 
-// Retry function with optional wait callback
-Future<T> retry<T>(
-  FutureOr<T> Function() operation,
-  Backoff backoff, {
-  void Function(Object error, Duration duration)? waitCallback,
-}) async {
-  try {
-    for (;;) {
-      final result = await operation();
-      return result;
-    }
-  } catch (error) {
-    if (waitCallback != null) {
-      waitCallback(error, backoff.nextBackOff());
-    }
-    await Future.delayed(backoff.nextBackOff());
-    rethrow;
-  }
+abstract class BackOff {
+  static const int STOP = -1;
+
+  void reset();
+
+  /// Gets the number of milliseconds to wait before retrying the operation or [STOP] to
+  /// indicate that no retries should be made.
+  ///
+  /// Example usage:
+  ///
+  /// ```dart
+  /// long backOffMillis = backoff.nextBackOffMillis();
+  /// if (backOffMillis == Backoff.STOP) {
+  ///   // do not retry operation
+  /// } else {
+  ///   // sleep for backOffMillis milliseconds and retry operation
+  /// }
+  /// ```
+  int nextBackOffMillis();
+
+  /// Fixed back-off policy whose back-off time is always zero, meaning that the operation is retried
+  /// immediately without waiting.
+  static final BackOff ZERO_BACKOFF = _ZeroBackOff();
+
+  /// Fixed back-off policy that always returns [STOP] for [nextBackOffMillis()],
+  /// meaning that the operation should not be retried.
+  static final BackOff STOP_BACKOFF = _StopBackOff();
 }
 
-// Retry with data function (suitable for operations returning data)
-Future<T> retryWithData<T>(
-  FutureOr<T> Function() operation,
-  Backoff backoff, {
-  void Function(Object error, Duration duration)? waitCallback,
-}) async {
-  try {
-    for (;;) {
-      final result = await operation();
-      return result;
-    }
-  } catch (error) {
-    if (waitCallback != null) {
-      waitCallback(error, backoff.nextBackOff());
-    }
-    await Future.delayed(backoff.nextBackOff());
-    rethrow;
-  }
-}
-
-// MaxRetriesBackoff limits retries with stop signal (optional)
-class MaxRetriesBackoff implements Backoff {
-  final Backoff _delegate;
-  final int _maxTries;
-  int _currentTries = 0;
-
-  MaxRetriesBackoff(this._delegate, this._maxTries);
+class _ZeroBackOff implements BackOff {
+  @override
+  void reset() {}
 
   @override
-  Duration nextBackOff() {
-    if (_maxTries == 0) {
-      return Backoff.stop;
-    }
-
-    if (_currentTries >= _maxTries) {
-      return Backoff.stop;
-    }
-
-    _currentTries++;
-    return _delegate.nextBackOff();
+  int nextBackOffMillis() {
+    return 0;
   }
+}
+
+class _StopBackOff implements BackOff {
+  @override
+  void reset() {}
 
   @override
-  void reset() {
-    _currentTries = 0;
-    _delegate.reset();
+  int nextBackOffMillis() {
+    return BackOff.STOP;
   }
 }

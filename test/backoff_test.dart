@@ -1,73 +1,130 @@
-import 'package:backoff/backoff.dart';
+import 'package:backoff/backoff.dart' as backoff;
 import 'package:test/test.dart';
 
 void main() {
-  test('ExponentialBackoff - Next Backoff', () {
-    final backoff = ExponentialBackoff();
-    expect(
-      backoff.nextBackOff().inMilliseconds,
-      // Use greaterThanOrEqualTo instead of closeTo
-      greaterThanOrEqualTo(Duration(milliseconds: 500).inMilliseconds),
-    );
-  });
+  group('ExponentialBackOff', () {
+    late backoff.ExponentialBackOff backoffInstance;
+    test('Default parameters', () {
+      backoffInstance = backoff.ExponentialBackOff();
 
-  test('Retry Function', () async {
-    Stopwatch stopwatch = Stopwatch();
-    stopwatch.start();
+      expect(backoffInstance.getInitialIntervalMillis(), equals(500));
+      expect(backoffInstance.getRandomizationFactor(), equals(0.5));
+      expect(backoffInstance.getMultiplier(), equals(1.5));
+      expect(backoffInstance.getMaxIntervalMillis(), equals(60000));
+      expect(backoffInstance.getMaxElapsedTimeMillis(), equals(900000));
+      expect(backoffInstance.getCurrentIntervalMillis(), equals(500));
 
-    int attempts = 0;
-    operation() async {
-      attempts++;
-      if (attempts < 3) {
-        throw Exception('Simulated failure');
-      }
-      return 'Success';
-    }
+      backoffInstance.reset();
 
-    final backoff = ExponentialBackoff();
+      expect(backoffInstance.getInitialIntervalMillis(), equals(500));
+      expect(backoffInstance.getCurrentIntervalMillis(), equals(500));
 
-    // Option 1: Initialize currentInterval for accurate first delay
-    // backoff.currentInterval = Duration(milliseconds: 500);
+      int backOffMillis = backoffInstance.nextBackOffMillis();
+      expect(backOffMillis, isA<int>());
+    });
 
-    final result = await retry(operation, backoff);
+    test('Custom parameters', () {
+      backoffInstance = backoff.ExponentialBackOff(
+        initialIntervalMillis: 1000,
+        randomizationFactor: 0.2,
+        multiplier: 2.0,
+        maxIntervalMillis: 60000,
+        maxElapsedTimeMillis: 180000,
+      );
 
-    expect(result, equals('Success'));
-    expect(attempts, equals(3));
+      expect(backoffInstance.getInitialIntervalMillis(), equals(1000));
+      expect(backoffInstance.getRandomizationFactor(), equals(0.2));
+      expect(backoffInstance.getMultiplier(), equals(2.0));
+      expect(backoffInstance.getMaxIntervalMillis(), equals(60000));
+      expect(backoffInstance.getMaxElapsedTimeMillis(), equals(180000));
+      expect(backoffInstance.getCurrentIntervalMillis(), equals(1000));
 
-    // Option 2: Calculate expected delays with randomization
-    final expectedDelays = [
-      500, // Adjust tolerance for actual expected range
-      750, // (500 * 1.5) +/- randomization
-      1125 // (750 * 1.5) +/- randomization
-    ];
+      backoffInstance.reset();
 
-    for (int i = 1; i < attempts; i++) {
-      expect(stopwatch.elapsedMilliseconds,
-          closeTo(expectedDelays[i - 1], 50)); // Tolerance for randomization
-    }
+      expect(backoffInstance.getInitialIntervalMillis(), equals(1000));
+      expect(backoffInstance.getCurrentIntervalMillis(), equals(1000));
 
-    stopwatch.stop();
-  });
+      int backOffMillis = backoffInstance.nextBackOffMillis();
+      expect(backOffMillis, isA<int>());
+    });
 
-  test('MaxRetriesBackoff', () {
-    final delegate = ExponentialBackoff();
-    final maxRetriesBackoff = MaxRetriesBackoff(delegate, 2);
+    test('initial interval is returned correctly', () {
+      backoffInstance = backoff.ExponentialBackOff();
+      expect(backoffInstance.nextBackOffMillis(),
+          backoff.ExponentialBackOff.DEFAULT_INITIAL_INTERVAL_MILLIS);
+    });
 
-    expect(
-      maxRetriesBackoff.nextBackOff().inMilliseconds,
-      closeTo(Duration(milliseconds: 500).inMilliseconds, 10),
-    );
-    expect(
-      maxRetriesBackoff.nextBackOff().inMilliseconds,
-      closeTo(Duration(milliseconds: 750).inMilliseconds, 10),
-    );
-    expect(
-      maxRetriesBackoff.nextBackOff().inMilliseconds,
-      closeTo(Duration(milliseconds: 1125).inMilliseconds, 10),
-    );
+    test('Elapsed time', () {
+      backoffInstance = backoff.ExponentialBackOff();
 
-    expect(maxRetriesBackoff.nextBackOff(), equals(Backoff.stop));
-    expect(maxRetriesBackoff.nextBackOff(), equals(Backoff.stop));
-    expect(maxRetriesBackoff.nextBackOff(), equals(Backoff.stop));
+      expect(backoffInstance.getElapsedTimeMillis(), greaterThanOrEqualTo(0));
+
+      // Simulate time passing
+      Future.delayed(Duration(milliseconds: 100));
+
+      expect(backoffInstance.getElapsedTimeMillis(), greaterThanOrEqualTo(100));
+    });
+
+    test('resets state to initial settings', () {
+      backoffInstance = backoff.ExponentialBackOff();
+
+      backoffInstance.currentIntervalMillis = 1000;
+      backoffInstance.reset();
+      expect(backoffInstance.currentIntervalMillis,
+          backoff.ExponentialBackOff.DEFAULT_INITIAL_INTERVAL_MILLIS);
+    });
+
+    test('increases interval after each call to nextBackOffMillis', () {
+      backoffInstance = backoff.ExponentialBackOff();
+
+      int initialInterval = backoffInstance.nextBackOffMillis();
+      int nextInterval = backoffInstance.nextBackOffMillis();
+      expect(nextInterval, greaterThan(initialInterval));
+    });
+
+    test('returns STOP after exceeding max elapsed time', () {
+      backoffInstance = backoff.ExponentialBackOff();
+
+      // Mock elapsed time to be greater than max allowed time
+      backoffInstance.startTimeNanos = DateTime.now().microsecondsSinceEpoch -
+          (backoff.ExponentialBackOff.DEFAULT_MAX_ELAPSED_TIME_MILLIS + 1) *
+              1000;
+      expect(backoffInstance.nextBackOffMillis(), backoff.BackOff.STOP);
+    });
+
+    test('throws error for invalid constructor arguments', () {
+      backoffInstance = backoff.ExponentialBackOff();
+
+      expect(
+          () => backoff.ExponentialBackOff(
+                initialIntervalMillis: 0,
+              ),
+          throwsArgumentError);
+
+      expect(
+          () => backoff.ExponentialBackOff(
+                randomizationFactor: -0.1,
+              ),
+          throwsArgumentError);
+
+      expect(
+          () => backoff.ExponentialBackOff(
+                multiplier: 0.5,
+              ),
+          throwsArgumentError);
+
+      expect(
+          () => backoff.ExponentialBackOff(
+                maxIntervalMillis: 100,
+                initialIntervalMillis: 200,
+              ),
+          throwsArgumentError);
+
+      expect(
+          () => backoff.ExponentialBackOff(
+                maxElapsedTimeMillis: 0,
+              ),
+          throwsArgumentError);
+    });
   });
 }

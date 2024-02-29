@@ -1,7 +1,7 @@
 name: backoff
-description: A starting point for Dart libraries or applications.
+description: The exponential backoff algorithm in Dart
 version: 1.0.0
-# repository: https://github.com/my_org/my_repo
+repository: https://github.com/iamEtornam/backoff
 
 environment:
   sdk: ^3.3.0

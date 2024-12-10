@@ -34,13 +34,13 @@ ExponentialBackOff backOff = ExponentialBackOff();
 
 You can customize the parameters during instantiation:
 ```dart
-ExponentialBackOff customBackOff = ExponentialBackOff(
-  initialIntervalMillis: 1000,
-  randomizationFactor: 0.2,
-  multiplier: 2.0,
-  maxIntervalMillis: 60000,
-  maxElapsedTimeMillis: 180000,
-);
+  final backoff = ExponentialBackOff(
+    initialIntervalMillis: 100,
+    randomizationFactor: 0.5,
+    multiplier: 2.0,
+    maxIntervalMillis: 10000,
+    maxElapsedTimeMillis: 60000
+  );
 ```
 
 ### 3. Use the backoff strategy in your retry logic

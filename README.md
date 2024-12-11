@@ -46,15 +46,14 @@ You can customize the parameters during instantiation:
 ### 3. Use the backoff strategy in your retry logic
 
 ```dart
-int backOffMillis = backOff.nextBackOffMillis();
-
-if (backOffMillis == BackOff.STOP) {
-  // Do not retry operation
-} else {
-  // Sleep for backOffMillis milliseconds and retry operation
-  await Future.delayed(Duration(milliseconds: backOffMillis));
-  // Retry operation here
-}
+while (true) {
+  int nextBackoff = backoff.nextBackOffMillis();
+  if (nextBackoff == BackOff.STOP) {
+    break; // Stop retrying
+  }
+  // Sleep for nextBackoff milliseconds
+  // Retry the operation
+} there too as usual let's skip instead
 ```
 
 ### 4. Reset the backoff
